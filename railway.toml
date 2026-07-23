@@ -1,0 +1,8 @@
+[build]
+buildCommand = "cd global-arbitrage-engine && bun install"
+
+[deploy]
+startCommand = "cd global-arbitrage-engine && bun src/index.ts"
+healthcheckPath = "/"
+healthcheckTimeout = 30
+restartPolicyType = "on_failure"
