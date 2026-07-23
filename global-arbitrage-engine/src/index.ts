@@ -11,6 +11,7 @@ import { sanitizeText } from "./lib/sanitize";
 import { PaymentEngine } from "./paymentEngine";
 import { CatalogGenerator } from "./pdfGenerator";
 import { MicroMarginSweeper } from "./microMarginSweeper";
+import { TokenTransactionHook } from "./tokenTransactionHook";
 import { Treasury } from "./treasury";
 import type { InventoryItem } from "./types";
 
@@ -282,6 +283,45 @@ app.get("/api/treasury/micro-sweep/recent", (c) =>
   c.json({ sweeps: MicroMarginSweeper.recentSweeps(20) })
 );
 
+/**
+ * WEB3 TRANSACTION HOOK CALLBACK
+ * Called from Phantom Wallet / frontend after user transaction.
+ * Fire-and-forget so the client gets an instant "queued" response.
+ */
+app.post("/api/hooks/solana-tx", async (c) => {
+  let body: { signature?: string; tokenMint?: string };
+  try {
+    body = await c.req.json();
+  } catch {
+    return c.json({ error: "Invalid JSON payload" }, 400);
+  }
+
+  const { signature, tokenMint } = body;
+
+  if (!signature || !tokenMint) {
+    return c.json({ error: "Missing signature or tokenMint" }, 400);
+  }
+
+  // Bun has no Cloudflare waitUntil — queue the promise for non-blocking UX
+  void TokenTransactionHook.verifyAndSweepTokenTx(signature, tokenMint)
+    .then((result) => {
+      if (result.success) {
+        console.log(
+          `📈 [SOLANA SWEEP] Success — Added $${result.treasuryContribution?.toFixed(6)} to treasury`
+        );
+      } else {
+        console.warn(`⚠️ [SOLANA SWEEP] Partial failure:`, result.error);
+      }
+    })
+    .catch((err) => console.error("Hook background error:", err));
+
+  return c.json({
+    status: "queued",
+    message:
+      "Transaction signature received. Micro-margin processing started in background.",
+  });
+});
+
 // DYNAMIC PSEO XML SITEMAP PATH
 app.get("/sitemap.xml", (c) => {
   const activeSlugs = [
@@ -310,7 +350,8 @@ app.use("/api/*", async (c, next) => {
     c.req.path === "/api/analytics/dashboard" ||
     c.req.path === "/api/treasury" ||
     c.req.path === "/api/bundles/smart-pairs" ||
-    c.req.path.startsWith("/api/loyalty/")
+    c.req.path.startsWith("/api/loyalty/") ||
+    c.req.path === "/api/hooks/solana-tx"
   ) {
     await next();
     return;
