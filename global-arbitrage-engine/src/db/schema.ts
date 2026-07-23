@@ -9,11 +9,20 @@ export const scans = sqliteTable("scans", {
 
 export const transactions = sqliteTable("transactions", {
   id: text("id").primaryKey(),
-  provider: text("provider").notNull(), // 'stripe' | 'paypal' | 'phantom'
-  referenceId: text("reference_id").unique().notNull(),
-  amount: real("amount").notNull(),
-  status: text("status").notNull(),
+  userId: text("user_id").notNull(),
+  provider: text("provider").notNull(), // 'stripe' | 'paypal' | 'solana'
+  referenceId: text("reference_id").unique().notNull(), // Tx hash or Session ID
+  fiatAmount: real("fiat_amount").default(0.0),
+  status: text("status").notNull(), // 'pending' | 'completed' | 'failed'
   createdAt: text("created_at").notNull(),
+});
+
+export const tokenBalances = sqliteTable("token_balances", {
+  walletAddress: text("wallet_address").primaryKey(),
+  flipcoinBalance: real("flipcoin_balance").default(0.0), // Solana Asset
+  worldfortecoinBalance: real("worldfortecoin_balance").default(0.0), // Arweave Asset
+  quancoinBalance: real("quancoin_balance").default(0.0), // Solana Asset
+  tierLevel: text("tier_level").default("standard"), // ecosystem multiplier
 });
 
 export const inventory = sqliteTable("inventory", {

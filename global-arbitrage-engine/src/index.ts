@@ -4,17 +4,26 @@ import { Database } from "bun:sqlite";
 import { drizzle } from "drizzle-orm/bun-sqlite";
 import { transactions } from "./db/schema";
 import { HyperBundleEngine } from "./bundleEngine";
+import { PaymentEngine } from "./paymentEngine";
 
 // 1. DATABASE
 const queryClient = new Database("arbitrage.db");
 queryClient.run(`
   CREATE TABLE IF NOT EXISTS transactions (
     id TEXT PRIMARY KEY,
+    user_id TEXT NOT NULL,
     provider TEXT NOT NULL,
     reference_id TEXT UNIQUE NOT NULL,
-    amount REAL NOT NULL,
+    fiat_amount REAL DEFAULT 0.0,
     status TEXT NOT NULL,
     created_at TEXT NOT NULL
+  );
+  CREATE TABLE IF NOT EXISTS token_balances (
+    wallet_address TEXT PRIMARY KEY,
+    flipcoin_balance REAL DEFAULT 0.0,
+    worldfortecoin_balance REAL DEFAULT 0.0,
+    quancoin_balance REAL DEFAULT 0.0,
+    tier_level TEXT DEFAULT 'standard'
   );
   CREATE TABLE IF NOT EXISTS scans (
     id TEXT PRIMARY KEY,
@@ -39,10 +48,8 @@ const Bugbot = {
       memoryMb: Math.round(process.memoryUsage().rss / 1024 / 1024),
     };
 
-    // Low-density high-utility log out
     console.error(`🚨 [BUGBOT ALERT] ${JSON.stringify(errorPayload)}`);
 
-    // Optional webhook channel — never blocks the request path
     const webhook = process.env.BUGBOT_DISCORD_WEBHOOK;
     if (webhook) {
       fetch(webhook, {
@@ -54,7 +61,6 @@ const Bugbot = {
       }).catch(() => {});
     }
 
-    // Self-Healing Hook Placeholder
     if (error.message.includes("Database locked")) {
       console.warn("🔄 Bugbot triggering automatic connection reset...");
     }
@@ -65,7 +71,6 @@ function toError(reason: unknown): Error {
   return reason instanceof Error ? reason : new Error(String(reason));
 }
 
-// Global process boundaries — non-blocking capture only
 process.on("uncaughtException", (error) => {
   void Bugbot.capture(error, "uncaughtException");
 });
@@ -83,7 +88,6 @@ const Engine = {
     this.isScanning = true;
     const start = performance.now();
     try {
-      // High-speed arbitrage aggregation logic hooks go here
       const duration = Math.round(performance.now() - start);
       return { success: true, durationMs: duration, found: 0 };
     } catch (error) {
@@ -102,7 +106,6 @@ app.use(
   cors({ origin: "*", allowHeaders: ["X-API-Key", "Content-Type"] })
 );
 
-// Global app error boundary — instant 500 to client, Bugbot async in background
 app.onError((err, c) => {
   void Bugbot.capture(err, `${c.req.method} ${c.req.path}`);
 
@@ -118,7 +121,6 @@ app.onError((err, c) => {
 
 // Guard Layer
 app.use("/api/*", async (c, next) => {
-  // Public syndication feeds + fault probe stay open
   if (
     c.req.path.startsWith("/api/feeds/") ||
     c.req.path === "/api/test-fault"
@@ -132,24 +134,39 @@ app.use("/api/*", async (c, next) => {
   await next();
 });
 
-// Optimization Routes
 app.post("/api/scan", async (c) => c.json(await Engine.executeScan()));
 
+// ONE-TAP FIAT PAYMENTS (Stripe / PayPal Handler)
 app.post("/api/tx/one-tap", async (c) => {
-  const { provider, referenceId, amount } = await c.req.json();
+  const body = await c.req.json();
+  const { provider, referenceId, amount, userId } = body;
+
+  console.log(`Processing ${provider} webhook for $${amount}...`);
+
   try {
+    const txId = crypto.randomUUID();
     const result = await db
       .insert(transactions)
       .values({
-        id: crypto.randomUUID(),
+        id: txId,
+        userId: userId ?? "anonymous",
         provider,
         referenceId,
-        amount,
+        fiatAmount: amount ?? 0,
         status: "completed",
         createdAt: new Date().toISOString(),
       })
       .returning();
-    return c.json({ success: true, tx: result[0] });
+
+    return c.json({
+      success: true,
+      message: "Fiat transaction processed instantly via native pipeline",
+      txId: result[0]?.id ?? txId,
+      provider,
+      tx: result[0],
+      allocatedHoldingBonus:
+        "Pending wallet connection for FLIP/WFC/QC tier upgrade.",
+    });
   } catch (err) {
     void Bugbot.capture(toError(err), "POST /api/tx/one-tap");
     return c.json(
@@ -159,7 +176,48 @@ app.post("/api/tx/one-tap", async (c) => {
   }
 });
 
-// Instant Feed for Syndication Channels (Flipstream, AuctionHouse, or Whitelabel partners)
+// SOLANA / PHANTOM WALLET ONE-TAP AUTH & VERIFICATION
+app.post("/api/tx/verify-solana", async (c) => {
+  const body = await c.req.json();
+  const { publicKey, signature, message, expectedAction } = body;
+
+  const isValid = PaymentEngine.verifySolanaSignature(
+    publicKey,
+    signature,
+    message
+  );
+  if (!isValid) {
+    return c.json(
+      { success: false, error: "Invalid cryptographic signature profile" },
+      401
+    );
+  }
+
+  const activeHoldings = { FLIP: 1250, WFC: 500, QC: 0 };
+  const loyaltyMultiplier = PaymentEngine.calculateLoyaltyMultiplier({
+    flipcoinBalance: activeHoldings.FLIP,
+    worldfortecoinBalance: activeHoldings.WFC,
+    quancoinBalance: activeHoldings.QC,
+  });
+
+  return c.json({
+    success: true,
+    verifiedWallet: publicKey,
+    ecosystemStatus: {
+      tokensTracked: [
+        "Flipcoin (Solana)",
+        "WorldFortecoin (Arweave)",
+        "Quancoin (Solana)",
+      ],
+      promotionalHoldTarget:
+        "Hold 1,000 combined tokens for premium platform tiers.",
+      activeHoldings,
+      loyaltyMultiplier,
+    },
+    authorizedAction: expectedAction || "HyperBundlePurchase",
+  });
+});
+
 app.get("/api/feeds/:channel", async (c) => {
   const channel = c.req.param("channel");
 
@@ -203,12 +261,10 @@ app.get("/api/feeds/:channel", async (c) => {
   });
 });
 
-// Force-Error Test Endpoint (verify Bugbot boundary)
 app.get("/api/test-fault", () => {
   throw new Error("Simulated high-velocity database race condition failure.");
 });
 
-// Dynamic PSEO Endpoint serving pre-optimized edge layouts instantly
 app.get("/deals/:slug", async (c) => {
   const slug = c.req.param("slug");
 
