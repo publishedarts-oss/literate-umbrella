@@ -85,7 +85,7 @@ export class MicroMarginSweeper {
         crypto.randomUUID(),
         totalCollected,
         totalDailySlice,
-        parsed.assetType,
+        parsed.assetType.toUpperCase(),
         count,
         new Date().toISOString()
       );
@@ -101,10 +101,10 @@ export class MicroMarginSweeper {
       log.info("micro_sweeper_captured", {
         totalToTreasury,
         count,
-        assetType: parsed.assetType,
+        assetType: parsed.assetType.toUpperCase(),
       });
       console.log(
-        `✨ [MICRO-SWEEPER] Captured $${totalToTreasury.toFixed(6)} from ${count} micro-transactions (${parsed.assetType})`
+        `✨ [MICRO-SWEEPER] Captured $${totalToTreasury.toFixed(6)} from ${count} micro-transactions (${parsed.assetType.toUpperCase()})`
       );
     } catch (err) {
       log.error("micro_sweeper_storage_failed", { err: String(err) });
