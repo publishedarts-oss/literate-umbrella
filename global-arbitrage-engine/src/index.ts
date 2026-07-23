@@ -103,7 +103,16 @@ const Engine = {
 const app = new Hono();
 app.use(
   "*",
-  cors({ origin: "*", allowHeaders: ["X-API-Key", "Content-Type"] })
+  cors({
+    origin: "*",
+    allowHeaders: [
+      "X-API-Key",
+      "Content-Type",
+      "X-User-FLIP",
+      "X-User-WFC",
+      "X-User-QC",
+    ],
+  })
 );
 
 app.onError((err, c) => {
@@ -221,6 +230,11 @@ app.post("/api/tx/verify-solana", async (c) => {
 app.get("/api/feeds/:channel", async (c) => {
   const channel = c.req.param("channel");
 
+  // Capture dynamic wallet mock balances from request headers
+  const flipBalance = parseFloat(c.req.header("X-User-FLIP") || "0");
+  const wfcBalance = parseFloat(c.req.header("X-User-WFC") || "0");
+  const qcBalance = parseFloat(c.req.header("X-User-QC") || "0");
+
   const sampleItemA = {
     id: "inv_1",
     sector: "RealEstate",
@@ -236,9 +250,11 @@ app.get("/api/feeds/:channel", async (c) => {
     meta: { retailEstimate: 600 },
   };
 
+  // Pricing tier from active ecosystem holding tokens
   const compiledBundle = HyperBundleEngine.createIrresistibleBundle(
     sampleItemA,
-    sampleItemB
+    sampleItemB,
+    { FLIP: flipBalance, WFC: wfcBalance, QC: qcBalance }
   );
 
   return c.json({
@@ -255,6 +271,7 @@ app.get("/api/feeds/:channel", async (c) => {
         offer_price: compiledBundle.bundlePrice,
         currency: "USD",
       },
+      tierApplied: compiledBundle.tierApplied,
       distribution_allowed: true,
       raw_components: compiledBundle.components,
     },
@@ -273,6 +290,7 @@ app.get("/deals/:slug", async (c) => {
     retailValue: 8500,
     bundlePrice: 2900,
     slug,
+    tierApplied: "Pioneer Tier (10% Eco-Holding Reward Applied)",
   };
 
   const seoPage = HyperBundleEngine.generatePSEO(mockBundle);
