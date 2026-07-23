@@ -14,6 +14,7 @@ import { MicroMarginSweeper } from "./microMarginSweeper";
 import { TokenTransactionHook } from "./tokenTransactionHook";
 import dashboard from "./dashboard";
 import { AgenticRnDLab } from "./rnd-lab-agent";
+import { licensingSystem } from "./licensing-module";
 import { Treasury } from "./treasury";
 import type { InventoryItem } from "./types";
 
@@ -281,6 +282,20 @@ app.post("/api/admin/rnd/trigger", async (c) => {
   });
 });
 
+app.post("/api/licenses", async (c) => {
+  const { licensee, tier, sectors } = await c.req.json();
+  const license = await licensingSystem.issueLicense(
+    licensee,
+    tier,
+    sectors || []
+  );
+  return c.json({ success: true, instance: license });
+});
+
+app.get("/api/licenses", async (c) => {
+  return c.json(await licensingSystem.getAllLicenses());
+});
+
 app.post("/api/treasury/micro-sweep", async (c) => {
   const body = await c.req.json();
   const transactions = body.transactions as Array<{ amount: number }>;
@@ -369,7 +384,8 @@ app.use("/api/*", async (c, next) => {
     c.req.path === "/api/treasury" ||
     c.req.path === "/api/bundles/smart-pairs" ||
     c.req.path.startsWith("/api/loyalty/") ||
-    c.req.path === "/api/hooks/solana-tx"
+    c.req.path === "/api/hooks/solana-tx" ||
+    c.req.path === "/api/licenses"
   ) {
     await next();
     return;
