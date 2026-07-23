@@ -149,17 +149,17 @@ export function getTreasurySnapshot(): TreasurySnapshot {
   };
 }
 
-/** Credit BTC and/or USDC sleeves from micro-margin sweeps (USD-notional). */
+/** Credit or debit BTC and/or USDC sleeves (USD-notional). */
 export function updateTreasury(btcUsd: number, usdcUsd: number): TreasurySnapshot {
-  if (btcUsd > 0) {
+  if (btcUsd !== 0) {
     db.run(
-      `UPDATE treasury_balances SET amount_usd = amount_usd + $amount WHERE asset = 'BTC'`,
+      `UPDATE treasury_balances SET amount_usd = MAX(0, amount_usd + $amount) WHERE asset = 'BTC'`,
       { $amount: btcUsd }
     );
   }
-  if (usdcUsd > 0) {
+  if (usdcUsd !== 0) {
     db.run(
-      `UPDATE treasury_balances SET amount_usd = amount_usd + $amount WHERE asset = 'USDC'`,
+      `UPDATE treasury_balances SET amount_usd = MAX(0, amount_usd + $amount) WHERE asset = 'USDC'`,
       { $amount: usdcUsd }
     );
   }

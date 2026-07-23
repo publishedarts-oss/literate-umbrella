@@ -16,6 +16,11 @@ import dashboard from "./dashboard";
 import { AgenticRnDLab } from "./rnd-lab-agent";
 import { licensingSystem } from "./licensing-module";
 import { FXArbitrageAgent } from "./fx-arbitrage-agent";
+import {
+  GamingPredictionAgent,
+  type PredictionMarket,
+} from "./gaming-prediction-agent";
+import { TreasuryInvestmentAgent } from "./treasury-investment-agent";
 import { Treasury } from "./treasury";
 import type { InventoryItem } from "./types";
 
@@ -294,6 +299,64 @@ app.post("/api/admin/arbitrage/poll", async (c) => {
   return c.json({ status: "evaluated", executionMatrix: summary });
 });
 
+// In-memory Vegas market + demo reserves
+const activePredictionMarket: PredictionMarket = {
+  marketId: "pred_lot_902",
+  targetLotId: "lot_realestate_902",
+  question:
+    "Will the Montana Wilderness Bundle hit its liquidation target within 60 seconds?",
+  yesPoolSize: 500,
+  noPoolSize: 500,
+  isResolved: false,
+};
+
+const activeSystemReserves = {
+  usdcBalance: 25_000,
+  btcBalance: 1.45,
+  fiatCashBalance: 5_000,
+};
+
+app.post("/api/vegas/wager", async (c) => {
+  try {
+    const body = await c.req.json();
+    const report = GamingPredictionAgent.placeWager(
+      activePredictionMarket,
+      parseFloat(String(body.betAmount ?? "10")),
+      body.prediction === "NO" ? "NO" : "YES"
+    );
+    return c.json({ success: true, wagerStatus: report });
+  } catch (err) {
+    return c.json({ success: false, error: String(err) }, 400);
+  }
+});
+
+app.post("/api/vegas/resolve", async (c) => {
+  const body = await c.req.json().catch(() => ({}));
+  const outcome = body.outcome === "NO" ? "NO" : "YES";
+  const result = GamingPredictionAgent.resolveMarket(
+    activePredictionMarket,
+    outcome
+  );
+  return c.json({ success: true, settlement: result });
+});
+
+app.post("/api/treasury/rebalance", async (c) => {
+  try {
+    const body = await c.req.json().catch(() => ({}));
+    const summary = TreasuryInvestmentAgent.optimizeAndPayOverhead(
+      activeSystemReserves,
+      parseFloat(String(body.computeCost ?? "150"))
+    );
+    return c.json({
+      success: true,
+      rebalanceSummary: summary,
+      treasury: Treasury.getTreasurySnapshot(),
+    });
+  } catch (err) {
+    return c.json({ success: false, error: String(err) }, 400);
+  }
+});
+
 app.post("/api/licenses", async (c) => {
   const { licensee, tier, sectors } = await c.req.json();
   const license = await licensingSystem.issueLicense(
@@ -397,7 +460,9 @@ app.use("/api/*", async (c, next) => {
     c.req.path === "/api/bundles/smart-pairs" ||
     c.req.path.startsWith("/api/loyalty/") ||
     c.req.path === "/api/hooks/solana-tx" ||
-    c.req.path === "/api/licenses"
+    c.req.path === "/api/licenses" ||
+    c.req.path === "/api/vegas/wager" ||
+    c.req.path === "/api/vegas/resolve"
   ) {
     await next();
     return;
