@@ -13,6 +13,7 @@ import { CatalogGenerator } from "./pdfGenerator";
 import { MicroMarginSweeper } from "./microMarginSweeper";
 import { TokenTransactionHook } from "./tokenTransactionHook";
 import dashboard from "./dashboard";
+import { AgenticRnDLab } from "./rnd-lab-agent";
 import { Treasury } from "./treasury";
 import type { InventoryItem } from "./types";
 
@@ -268,6 +269,16 @@ app.get("/api/bundles/smart-pairs", (c) => {
 app.post("/api/pipeline/ingest-all", async (c) => {
   const results = await HyperBundleEngine.ingestAllSources();
   return c.json({ success: true, results });
+});
+
+app.post("/api/admin/rnd/trigger", async (c) => {
+  const discoveredSectors = await AgenticRnDLab.runDiscoveryCycle();
+  return c.json({
+    success: true,
+    agent: "AGENTIC-RND-LAB-v1",
+    action: "On-demand trend matrix evaluation finalized",
+    payload: discoveredSectors,
+  });
 });
 
 app.post("/api/treasury/micro-sweep", async (c) => {
@@ -741,7 +752,7 @@ app.post("/deals/:slug/share", async (c) => {
   return c.json(HyperBundleEngine.shareBundle(bundle, sessionId));
 });
 
-// Continuous automated background worker — purge + multi-source feeds
+// Continuous automation — purge, multi-source feeds, and agentic R&D discovery
 const PORT = 3000;
 setInterval(async () => {
   const { purgedCount } = await HyperBundleEngine.purgeExpiredPerishables();
@@ -751,7 +762,8 @@ setInterval(async () => {
     );
   }
   await HyperBundleEngine.ingestAllSources();
-}, 30_000);
+  await AgenticRnDLab.runDiscoveryCycle();
+}, 60_000);
 
 void HyperBundleEngine.purgeExpiredPerishables();
 
