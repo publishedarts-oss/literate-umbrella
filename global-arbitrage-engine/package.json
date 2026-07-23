@@ -1,12 +1,13 @@
 {
   "name": "global-arbitrage-engine",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "type": "module",
   "scripts": {
     "dev": "bun --watch src/index.ts",
     "build": "bun build ./src/index.ts --outdir ./dist --target bun",
     "start": "bun src/index.ts",
-    "deploy:tokens": "bun src/deployTokens.ts"
+    "deploy:tokens": "bun src/deployTokens.ts",
+    "test": "bun test"
   },
   "dependencies": {
     "@solana/spl-token": "^0.4.15",

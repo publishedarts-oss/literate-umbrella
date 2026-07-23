@@ -2,10 +2,16 @@ import { Hono } from "hono";
 import { cors } from "hono/cors";
 import { Database } from "bun:sqlite";
 import { drizzle } from "drizzle-orm/bun-sqlite";
+import { APP, RATE_LIMITS } from "./config";
 import { transactions } from "./db/schema";
-import { HyperBundleEngine } from "./bundleEngine";
+import { HyperBundleEngine } from "./hyperbundle-engine";
+import { checkRateLimit } from "./lib/rateLimit";
+import { applySecurityHeaders } from "./lib/securityHeaders";
+import { sanitizeText } from "./lib/sanitize";
 import { PaymentEngine } from "./paymentEngine";
 import { CatalogGenerator } from "./pdfGenerator";
+import { Treasury } from "./treasury";
+import type { InventoryItem } from "./types";
 
 // 1. DATABASE
 const queryClient = new Database("arbitrage.db");
@@ -152,6 +158,7 @@ app.use(
       "X-User-QC",
       "X-Wallet-Active",
       "X-AB-Group",
+      "X-Session-Id",
     ],
   })
 );
@@ -167,6 +174,91 @@ app.onError((err, c) => {
     },
     500
   );
+});
+
+app.use("*", async (c, next) => {
+  applySecurityHeaders((k, v) => c.header(k, v));
+  await next();
+});
+
+app.use("*", async (c, next) => {
+  const key = `${c.req.method}:${c.req.path}:${c.req.header("x-forwarded-for") || "local"}`;
+  const max = c.req.path.includes("/buy")
+    ? RATE_LIMITS.BUY_MAX
+    : c.req.path.includes("/ingest")
+      ? RATE_LIMITS.INGEST_MAX
+      : RATE_LIMITS.DEFAULT_MAX;
+  const limit = checkRateLimit(key, max);
+  c.header("X-RateLimit-Remaining", String(limit.remaining));
+  if (!limit.allowed) {
+    return c.json(
+      {
+        error: "Slow down, collector — too many taps.",
+        retryAfterMs: limit.retryAfterMs,
+      },
+      429
+    );
+  }
+  await next();
+});
+
+app.get("/", (c) =>
+  c.json({
+    name: APP.NAME,
+    tagline: APP.TAGLINE,
+    version: APP.VERSION,
+    fees: {
+      tx: "3.333%",
+      aumAnnual: "1.666%",
+    },
+  })
+);
+
+app.get("/api/treasury", (c) => c.json(Treasury.getTreasurySnapshot()));
+
+app.get("/api/loyalty/:sessionId", (c) => {
+  const profile = HyperBundleEngine.loyalty.touchLoyaltySession(
+    sanitizeText(c.req.param("sessionId"), 80)
+  );
+  return c.json(profile);
+});
+
+app.get("/api/bundles/smart-pairs", (c) => {
+  const inventory = HyperBundleEngine.listInventory();
+  const seeded: InventoryItem[] =
+    inventory.length >= 2
+      ? inventory
+      : [
+          {
+            id: "inv_re_1",
+            sector: "RealEstate",
+            title: "Wilderness Plot",
+            wholesalePrice: 1000,
+            meta: { retailEstimate: 3000 },
+          },
+          {
+            id: "inv_pe_1",
+            sector: "Perishables",
+            title: "Prime Wagyu Cut Box",
+            wholesalePrice: 100,
+            meta: { retailEstimate: 400 },
+          },
+          {
+            id: "inv_air_1",
+            sector: "Airlines",
+            title: "Empty Leg Miami NYC",
+            wholesalePrice: 950,
+            meta: { retailEstimate: 4500 },
+          },
+        ];
+  return c.json({
+    pairs: HyperBundleEngine.suggestSmartPairs(seeded),
+  });
+});
+
+app.post("/api/pipeline/ingest-all", async (c) => {
+  const results = await HyperBundleEngine.ingestAllSources();
+  return c.json({ success: true, results });
 });
 
 // DYNAMIC PSEO XML SITEMAP PATH
@@ -194,7 +286,10 @@ app.use("/api/*", async (c, next) => {
   if (
     c.req.path.startsWith("/api/feeds/") ||
     c.req.path === "/api/test-fault" ||
-    c.req.path === "/api/analytics/dashboard"
+    c.req.path === "/api/analytics/dashboard" ||
+    c.req.path === "/api/treasury" ||
+    c.req.path === "/api/bundles/smart-pairs" ||
+    c.req.path.startsWith("/api/loyalty/")
   ) {
     await next();
     return;
@@ -455,15 +550,17 @@ app.get("/assets/dashboard-component.js", (c) => {
 
 app.get("/deals/:slug", async (c) => {
   const slug = c.req.param("slug");
+  const sessionId =
+    sanitizeText(c.req.header("X-Session-Id") || crypto.randomUUID(), 80);
 
-  const sampleItemA = {
+  const sampleItemA: InventoryItem = {
     id: "inv_re_1",
     sector: "RealEstate",
     title: "Wilderness Plot",
     wholesalePrice: 1000,
     meta: { retailEstimate: 3000 },
   };
-  const sampleItemB = {
+  const sampleItemB: InventoryItem = {
     id: "inv_pe_1",
     sector: "Perishables",
     title: "Prime Wagyu Cut Box",
@@ -474,14 +571,21 @@ app.get("/deals/:slug", async (c) => {
   const flipBalance = parseFloat(c.req.header("X-User-FLIP") || "0");
   const wfcBalance = parseFloat(c.req.header("X-User-WFC") || "0");
   const qcBalance = parseFloat(c.req.header("X-User-QC") || "0");
+  const holdBalances = { FLIP: flipBalance, WFC: wfcBalance, QC: qcBalance };
+
+  const loyalty = HyperBundleEngine.loyalty.touchLoyaltySession(sessionId, {
+    holdBalances,
+  });
 
   const bundle = HyperBundleEngine.createIrresistibleBundle(
     sampleItemA,
     sampleItemB,
-    { FLIP: flipBalance, WFC: wfcBalance, QC: qcBalance }
+    holdBalances,
+    undefined,
+    { streakDays: loyalty.visitStreak }
   );
-  // Keep requested slug in the buy form target
   bundle.slug = slug;
+  bundle.badges = loyalty.badges;
 
   HyperBundleEngine.trackMetrics(
     bundle.id,
@@ -492,34 +596,83 @@ app.get("/deals/:slug", async (c) => {
 
   const seoPage = HyperBundleEngine.generatePSEO(bundle);
   Object.entries(seoPage.headers).forEach(([key, val]) => c.header(key, val));
+  c.header("X-Session-Id", sessionId);
   return c.html(seoPage.html);
 });
 
 app.post("/deals/:slug/buy", async (c) => {
-  const abGroup =
-    c.req.query("ab") ||
-    c.req.header("X-AB-Group") ||
-    "control_40pct";
+  const sessionId =
+    sanitizeText(c.req.header("X-Session-Id") || crypto.randomUUID(), 80);
+  const forced =
+    (c.req.query("ab") as "control_40pct" | "aggressive_55pct" | undefined) ||
+    (c.req.header("X-AB-Group") as
+      | "control_40pct"
+      | "aggressive_55pct"
+      | undefined);
 
-  HyperBundleEngine.trackMetrics(
-    "inv_re_1_inv_pe_1",
-    "conversion",
-    abGroup,
-    c.req.header("X-Wallet-Active") === "true"
+  const sampleItemA: InventoryItem = {
+    id: "inv_re_1",
+    sector: "RealEstate",
+    title: "Wilderness Plot",
+    wholesalePrice: 1000,
+    meta: { retailEstimate: 3000 },
+  };
+  const sampleItemB: InventoryItem = {
+    id: "inv_pe_1",
+    sector: "Perishables",
+    title: "Prime Wagyu Cut Box",
+    wholesalePrice: 100,
+    meta: { retailEstimate: 400 },
+  };
+
+  const loyalty = HyperBundleEngine.loyalty.touchLoyaltySession(sessionId);
+  const bundle = HyperBundleEngine.createIrresistibleBundle(
+    sampleItemA,
+    sampleItemB,
+    loyalty.holdBalances,
+    forced ?? "control_40pct",
+    { streakDays: loyalty.visitStreak }
   );
+  bundle.slug = c.req.param("slug");
+
+  const result = HyperBundleEngine.completePurchase(bundle, sessionId, {
+    walletConnected: c.req.header("X-Wallet-Active") === "true",
+  });
 
   console.log(
     "🔔 [OUTBOUND PIPE] Immediate Alpha Sale Closed. Alerting fulfillment arrays..."
   );
-  return c.json({
-    success: true,
-    message: "MVP Beta Checkout Completed!",
-    tracked: true,
-    abGroup,
-  });
+  return c.json(result);
 });
 
-// Continuous automated background worker — purge + airline feed
+app.post("/deals/:slug/share", async (c) => {
+  const sessionId =
+    sanitizeText(c.req.header("X-Session-Id") || crypto.randomUUID(), 80);
+  const sampleItemA: InventoryItem = {
+    id: "inv_re_1",
+    sector: "RealEstate",
+    title: "Wilderness Plot",
+    wholesalePrice: 1000,
+    meta: { retailEstimate: 3000 },
+  };
+  const sampleItemB: InventoryItem = {
+    id: "inv_pe_1",
+    sector: "Perishables",
+    title: "Prime Wagyu Cut Box",
+    wholesalePrice: 100,
+    meta: { retailEstimate: 400 },
+  };
+  const bundle = HyperBundleEngine.createIrresistibleBundle(
+    sampleItemA,
+    sampleItemB,
+    undefined,
+    "control_40pct"
+  );
+  bundle.slug = c.req.param("slug");
+  return c.json(HyperBundleEngine.shareBundle(bundle, sessionId));
+});
+
+// Continuous automated background worker — purge + multi-source feeds
 const PORT = 3000;
 setInterval(async () => {
   const { purgedCount } = await HyperBundleEngine.purgeExpiredPerishables();
@@ -528,17 +681,7 @@ setInterval(async () => {
       `🧹 Janitor automatic runtime check swept ${purgedCount} dead records.`
     );
   }
-
-  const mockAirlinesFeed = [
-    {
-      uuid: "flight_902",
-      displayTitle: "Empty Leg: Miami to NYC Private Jet",
-      costBasis: 950,
-      attributes: { retailEstimate: 4500 },
-      deadline: new Date(Date.now() + 86_400_000).toISOString(),
-    },
-  ];
-  await HyperBundleEngine.ingestExternalFeed("Airlines", mockAirlinesFeed);
+  await HyperBundleEngine.ingestAllSources();
 }, 30_000);
 
 void HyperBundleEngine.purgeExpiredPerishables();

@@ -45,6 +45,35 @@ export const analyticsEvents = sqliteTable("analytics_events", {
   timestamp: text("timestamp").notNull(),
 });
 
+export const feeLedger = sqliteTable("fee_ledger", {
+  id: text("id").primaryKey(),
+  kind: text("kind").notNull(), // 'tx' | 'aum'
+  amountUsd: real("amount_usd").notNull(),
+  bundleId: text("bundle_id"),
+  sessionId: text("session_id"),
+  note: text("note").notNull(),
+  createdAt: text("created_at").notNull(),
+});
+
+export const treasuryBalances = sqliteTable("treasury_balances", {
+  asset: text("asset").primaryKey(), // BTC | USDC | OPS_STABLE
+  amountUsd: real("amount_usd").notNull(),
+});
+
+export const loyaltySessions = sqliteTable("loyalty_sessions", {
+  sessionId: text("session_id").primaryKey(),
+  userId: text("user_id"),
+  visitStreak: integer("visit_streak").default(1),
+  lastVisitDay: text("last_visit_day").notNull(),
+  sharesCount: integer("shares_count").default(0),
+  purchasesCount: integer("purchases_count").default(0),
+  badgesJson: text("badges_json").default("[]"),
+  holdFlip: real("hold_flip").default(0),
+  holdWfc: real("hold_wfc").default(0),
+  holdQc: real("hold_qc").default(0),
+  updatedAt: text("updated_at").notNull(),
+});
+
 export const bundles = sqliteTable("bundles", {
   id: text("id").primaryKey(),
   slug: text("slug").unique().notNull(),
