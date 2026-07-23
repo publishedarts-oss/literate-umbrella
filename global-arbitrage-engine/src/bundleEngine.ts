@@ -1,6 +1,5 @@
 import { Database } from "bun:sqlite";
 
-// Shared engine DB connection (same file as API bootstrap)
 const queryClient = new Database("arbitrage.db");
 queryClient.run(`
   CREATE TABLE IF NOT EXISTS inventory (
@@ -15,23 +14,40 @@ queryClient.run(`
     id TEXT PRIMARY KEY,
     bundle_id TEXT NOT NULL,
     event_type TEXT NOT NULL,
+    ab_group TEXT NOT NULL DEFAULT 'control_40pct',
     wallet_connected INTEGER DEFAULT 0,
     timestamp TEXT NOT NULL
   );
 `);
 
-// Pure functional optimization logic to build high-margin bundles
+// Migrate older analytics tables that predate ab_group
+try {
+  queryClient.run(
+    `ALTER TABLE analytics_events ADD COLUMN ab_group TEXT NOT NULL DEFAULT 'control_40pct'`
+  );
+} catch {
+  // column already exists
+}
+
+export type AbGroup = "control_40pct" | "aggressive_55pct";
+
 export const HyperBundleEngine = {
-  // Calculates price based on holding vectors of FLIP, WFC, and QC
+  // Dynamic A/B Pricing Algorithm
   createIrresistibleBundle(
     itemA: any,
     itemB: any,
-    holdBalances?: { FLIP: number; WFC: number; QC: number }
+    holdBalances?: { FLIP: number; WFC: number; QC: number },
+    forcedGroup?: AbGroup
   ): any {
     const combinedWholesale = itemA.wholesalePrice + itemB.wholesalePrice;
     const combinedRetail =
       (itemA.meta.retailEstimate || itemA.wholesalePrice * 1.5) +
       (itemB.meta.retailEstimate || itemB.wholesalePrice * 1.5);
+
+    const abGroup: AbGroup =
+      forcedGroup ||
+      (Math.random() > 0.5 ? "control_40pct" : "aggressive_55pct");
+    const baseDiscount = abGroup === "aggressive_55pct" ? 0.55 : 0.4;
 
     let holdingDiscountMultiplier = 1.0;
     if (holdBalances) {
@@ -41,10 +57,10 @@ export const HyperBundleEngine = {
       else if (combinedHoldScore >= 1000) holdingDiscountMultiplier = 0.9;
     }
 
-    const targetedBaseDiscount = 0.4 * (2.0 - holdingDiscountMultiplier);
+    const targetedDiscount = baseDiscount * (2.0 - holdingDiscountMultiplier);
     const optimizedPrice = Math.max(
       combinedWholesale * 1.1,
-      combinedRetail * (1 - targetedBaseDiscount)
+      combinedRetail * (1 - targetedDiscount)
     );
     const slug = `${itemA.title}-${itemB.title}`
       .toLowerCase()
@@ -57,6 +73,7 @@ export const HyperBundleEngine = {
       title: `The Ultimate ${itemA.sector} & ${itemB.sector} Premium Combo`,
       retailValue: Math.round(combinedRetail),
       bundlePrice: Math.round(optimizedPrice),
+      abGroup,
       tierApplied:
         holdingDiscountMultiplier < 1.0
           ? "Premium Gated Discount"
@@ -66,12 +83,18 @@ export const HyperBundleEngine = {
   },
 
   generatePSEO(bundle: any): { html: string; headers: Record<string, string> } {
-    const html = `<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><title>${bundle.title}</title></head><body style="font-family:sans-serif;max-width:600px;margin:40px auto;padding:20px;background:#f9f9f9;"><span style="background:#ff4757;color:white;padding:4px 8px;font-weight:bold;border-radius:4px;font-size:0.8rem;">GATED DEAL VIA FLIP/WFC/QC BOARDS</span><h1 style="margin-top:10px;color:#111;">${bundle.title}</h1><p style="font-size:1.2rem;color:#333;">Valued at <del>$${bundle.retailValue}</del> <strong style="color:#2ed573;">Now Only $${bundle.bundlePrice}</strong></p><p style="font-size:0.9rem;color:#777;">System Tier Tracking: <b>${bundle.tierApplied || "None"}</b></p><button style="width:100%;padding:15px;background:#2ed573;border:none;color:white;font-size:1.2rem;font-weight:bold;cursor:pointer;border-radius:6px;box-shadow:0 4px 6px rgba(0,0,0,0.1);">One-Tap Buy Now</button></body></html>`;
+    const html = `<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><title>${bundle.title}</title></head><body style="font-family:sans-serif;max-width:600px;margin:40px auto;padding:20px;background:#fafafa;">
+      <span style="background:#ff4757;color:white;padding:4px 8px;font-weight:bold;border-radius:4px;font-size:0.8rem;">BETA MARKET DROP</span>
+      <h1 style="margin-top:10px;">${bundle.title}</h1>
+      <p style="font-size:1.3rem;">Valued at <del>$${bundle.retailValue}</del> <strong style="color:#2ed573;">Now Only $${bundle.bundlePrice}</strong></p>
+      <small style="color:#999;">Variant ID: ${bundle.abGroup || "control_40pct"} | ${bundle.tierApplied}</small><br><br>
+      <form action="/deals/${bundle.slug}/buy" method="POST"><button style="width:100%;padding:15px;background:#2ed573;border:none;color:white;font-size:1.2rem;font-weight:bold;cursor:pointer;border-radius:6px;">One-Tap Buy Now</button></form>
+    </body></html>`;
     return {
       html,
       headers: {
         "Content-Type": "text/html",
-        "Cache-Control": "public, max-age=60",
+        "Cache-Control": "public, max-age=10",
       },
     };
   },
@@ -107,13 +130,11 @@ export const HyperBundleEngine = {
     console.log(
       `🧹 [CRON JANITOR] Scanning for inventory components expired before ${now}...`
     );
-
     try {
       const query = queryClient.prepare(
         "DELETE FROM inventory WHERE expires_at IS NOT NULL AND expires_at < $now"
       );
       const result = query.run({ $now: now });
-
       if (result.changes > 0) {
         console.log(
           `✨ [CRON JANITOR] Successfully purged ${result.changes} expired perishable records.`
@@ -126,7 +147,6 @@ export const HyperBundleEngine = {
     }
   },
 
-  // DYNAMIC INGESTION PIPELINE CONTROLLER
   async ingestExternalFeed(sector: string, externalItems: any[]) {
     console.log(
       `📥 [PIPELINE] Ingesting ${externalItems.length} streams for sector: ${sector}`
@@ -151,21 +171,22 @@ export const HyperBundleEngine = {
     return { success: true, count: ingestedCount };
   },
 
-  // ZERO-LATENCY ANALYTICS WRITER
   trackMetrics(
     bundleId: string,
     eventType: string,
+    abGroup: string = "control_40pct",
     walletConnected: boolean = false
   ) {
     try {
       const query = queryClient.prepare(`
-        INSERT INTO analytics_events (id, bundle_id, event_type, wallet_connected, timestamp)
-        VALUES ($id, $bundleId, $eventType, $walletConnected, $timestamp)
+        INSERT INTO analytics_events (id, bundle_id, event_type, ab_group, wallet_connected, timestamp)
+        VALUES ($id, $bundleId, $eventType, $abGroup, $walletConnected, $timestamp)
       `);
       query.run({
         $id: crypto.randomUUID(),
         $bundleId: bundleId,
         $eventType: eventType,
+        $abGroup: abGroup,
         $walletConnected: walletConnected ? 1 : 0,
         $timestamp: new Date().toISOString(),
       });
@@ -174,7 +195,17 @@ export const HyperBundleEngine = {
     }
   },
 
-  // HIGH-VELOCITY ANALYTICS RATIO AGGREGATOR
+  getMetrics() {
+    const total = queryClient
+      .prepare(
+        "SELECT event_type, ab_group, COUNT(*) as count FROM analytics_events GROUP BY event_type, ab_group"
+      )
+      .all() as { event_type: string; ab_group: string; count: number }[];
+
+    return { engine: "AM-v1", rawEventMatrix: total };
+  },
+
+  // Backward-compatible aggregate dashboard shape
   getConversionPerformanceMetrics() {
     const totalImpressions = queryClient
       .prepare(
@@ -205,6 +236,7 @@ export const HyperBundleEngine = {
         walletEngagedUsers: walletCheck.count,
         blendedConversionRate: `${rate.toFixed(2)}%`,
       },
+      abMatrix: this.getMetrics().rawEventMatrix,
     };
   },
 };

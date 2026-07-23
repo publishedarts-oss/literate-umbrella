@@ -38,6 +38,7 @@ export const analyticsEvents = sqliteTable("analytics_events", {
   id: text("id").primaryKey(),
   bundleId: text("bundle_id").notNull(),
   eventType: text("event_type").notNull(), // 'impression' | 'pdf_download' | 'conversion'
+  abGroup: text("ab_group").notNull(), // 'control_40pct' | 'aggressive_55pct'
   walletConnected: integer("wallet_connected", { mode: "boolean" }).default(
     false
   ),

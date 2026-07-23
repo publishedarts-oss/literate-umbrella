@@ -44,11 +44,20 @@ queryClient.run(`
     id TEXT PRIMARY KEY,
     bundle_id TEXT NOT NULL,
     event_type TEXT NOT NULL,
+    ab_group TEXT NOT NULL DEFAULT 'control_40pct',
     wallet_connected INTEGER DEFAULT 0,
     timestamp TEXT NOT NULL
   );
 `);
 const db = drizzle(queryClient);
+
+try {
+  queryClient.run(
+    `ALTER TABLE analytics_events ADD COLUMN ab_group TEXT NOT NULL DEFAULT 'control_40pct'`
+  );
+} catch {
+  // column already exists
+}
 
 // Seed one expired perishable so the janitor has work on first sweep
 queryClient.run(`
@@ -142,6 +151,7 @@ app.use(
       "X-User-WFC",
       "X-User-QC",
       "X-Wallet-Active",
+      "X-AB-Group",
     ],
   })
 );
@@ -212,8 +222,10 @@ app.post("/api/pipeline/ingest", async (c) => {
 
 // ANALYTICS MONITORING BOARD
 app.get("/api/analytics/dashboard", (c) => {
-  const metrics = HyperBundleEngine.getConversionPerformanceMetrics();
-  return c.json(metrics);
+  return c.json({
+    ...HyperBundleEngine.getConversionPerformanceMetrics(),
+    ...HyperBundleEngine.getMetrics(),
+  });
 });
 
 // ONE-TAP FIAT PAYMENTS (Stripe / PayPal Handler)
@@ -343,6 +355,7 @@ app.get("/api/feeds/:channel", async (c) => {
         currency: "USD",
       },
       tierApplied: compiledBundle.tierApplied,
+      abGroup: compiledBundle.abGroup,
       distribution_allowed: true,
       raw_components: compiledBundle.components,
     },
@@ -372,6 +385,7 @@ app.get("/deals/:slug/brochure.pdf", async (c) => {
     HyperBundleEngine.trackMetrics(
       activeBundle.id,
       "pdf_download",
+      "control_40pct",
       c.req.header("X-Wallet-Active") === "true"
     );
 
@@ -441,43 +455,79 @@ app.get("/assets/dashboard-component.js", (c) => {
 
 app.get("/deals/:slug", async (c) => {
   const slug = c.req.param("slug");
-  const bundleIdMock = "bundle_realestate_perishables_01";
 
-  // Fire-and-forget impression tracking
+  const sampleItemA = {
+    id: "inv_re_1",
+    sector: "RealEstate",
+    title: "Wilderness Plot",
+    wholesalePrice: 1000,
+    meta: { retailEstimate: 3000 },
+  };
+  const sampleItemB = {
+    id: "inv_pe_1",
+    sector: "Perishables",
+    title: "Prime Wagyu Cut Box",
+    wholesalePrice: 100,
+    meta: { retailEstimate: 400 },
+  };
+
+  const flipBalance = parseFloat(c.req.header("X-User-FLIP") || "0");
+  const wfcBalance = parseFloat(c.req.header("X-User-WFC") || "0");
+  const qcBalance = parseFloat(c.req.header("X-User-QC") || "0");
+
+  const bundle = HyperBundleEngine.createIrresistibleBundle(
+    sampleItemA,
+    sampleItemB,
+    { FLIP: flipBalance, WFC: wfcBalance, QC: qcBalance }
+  );
+  // Keep requested slug in the buy form target
+  bundle.slug = slug;
+
   HyperBundleEngine.trackMetrics(
-    bundleIdMock,
+    bundle.id,
     "impression",
+    bundle.abGroup,
     c.req.header("X-Wallet-Active") === "true"
   );
 
-  const mockBundle = {
-    title: `High Velocity Combo Pack [${slug}]`,
-    retailValue: 8500,
-    bundlePrice: 2900,
-    slug,
-    tierApplied: "Pioneer Tier (10% Eco-Holding Reward Applied)",
-  };
-
-  const seoPage = HyperBundleEngine.generatePSEO(mockBundle);
-
+  const seoPage = HyperBundleEngine.generatePSEO(bundle);
   Object.entries(seoPage.headers).forEach(([key, val]) => c.header(key, val));
   return c.html(seoPage.html);
 });
 
 app.post("/deals/:slug/buy", async (c) => {
-  const bundleIdMock = "bundle_realestate_perishables_01";
+  const abGroup =
+    c.req.query("ab") ||
+    c.req.header("X-AB-Group") ||
+    "control_40pct";
+
   HyperBundleEngine.trackMetrics(
-    bundleIdMock,
+    "inv_re_1_inv_pe_1",
     "conversion",
+    abGroup,
     c.req.header("X-Wallet-Active") === "true"
   );
-  return c.json({ status: "processed", tracked: true });
+
+  console.log(
+    "🔔 [OUTBOUND PIPE] Immediate Alpha Sale Closed. Alerting fulfillment arrays..."
+  );
+  return c.json({
+    success: true,
+    message: "MVP Beta Checkout Completed!",
+    tracked: true,
+    abGroup,
+  });
 });
 
-// Native lightweight background worker — purge + simulated airline feed every 60s
+// Continuous automated background worker — purge + airline feed
 const PORT = 3000;
 setInterval(async () => {
-  await HyperBundleEngine.purgeExpiredPerishables();
+  const { purgedCount } = await HyperBundleEngine.purgeExpiredPerishables();
+  if (purgedCount > 0) {
+    console.log(
+      `🧹 Janitor automatic runtime check swept ${purgedCount} dead records.`
+    );
+  }
 
   const mockAirlinesFeed = [
     {
@@ -489,9 +539,8 @@ setInterval(async () => {
     },
   ];
   await HyperBundleEngine.ingestExternalFeed("Airlines", mockAirlinesFeed);
-}, 60_000);
+}, 30_000);
 
-// Kick an immediate sweep on boot so expired demo inventory clears promptly
 void HyperBundleEngine.purgeExpiredPerishables();
 
 export default {
