@@ -226,6 +226,7 @@ app.get("/deals/:slug", async (c) => {
 });
 
 export default {
-  port: Number(process.env.PORT) || 3000,
+  port: 3000,
+  hostname: "0.0.0.0", // Forces accessibility across your entire machine
   fetch: app.fetch,
 };
