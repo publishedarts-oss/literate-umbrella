@@ -25,7 +25,55 @@ queryClient.run(`
 `);
 const db = drizzle(queryClient);
 
-// 2. ENGINE CONTROLLER
+// 2. NATIVE BUGBOT ENGINE (zero-overhead, fire-and-forget)
+const Bugbot = {
+  async capture(error: Error, ContextInfo: string) {
+    const errorPayload = {
+      bot: "BUGBOT-v1",
+      timestamp: new Date().toISOString(),
+      location: ContextInfo,
+      message: error.message,
+      name: error.name,
+      stack: error.stack?.split("\n").slice(0, 3).join(" | "),
+      pid: process.pid,
+      memoryMb: Math.round(process.memoryUsage().rss / 1024 / 1024),
+    };
+
+    // Low-density high-utility log out
+    console.error(`🚨 [BUGBOT ALERT] ${JSON.stringify(errorPayload)}`);
+
+    // Optional webhook channel — never blocks the request path
+    const webhook = process.env.BUGBOT_DISCORD_WEBHOOK;
+    if (webhook) {
+      fetch(webhook, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          content: `⚠️ **System Fault:** ${error.message}\n\`\`\`${errorPayload.stack ?? "no-stack"}\`\`\``,
+        }),
+      }).catch(() => {});
+    }
+
+    // Self-Healing Hook Placeholder
+    if (error.message.includes("Database locked")) {
+      console.warn("🔄 Bugbot triggering automatic connection reset...");
+    }
+  },
+};
+
+function toError(reason: unknown): Error {
+  return reason instanceof Error ? reason : new Error(String(reason));
+}
+
+// Global process boundaries — non-blocking capture only
+process.on("uncaughtException", (error) => {
+  void Bugbot.capture(error, "uncaughtException");
+});
+process.on("unhandledRejection", (reason) => {
+  void Bugbot.capture(toError(reason), "unhandledRejection");
+});
+
+// 3. ENGINE CONTROLLER
 const Engine = {
   isScanning: false,
   async executeScan() {
@@ -39,7 +87,7 @@ const Engine = {
       const duration = Math.round(performance.now() - start);
       return { success: true, durationMs: duration, found: 0 };
     } catch (error) {
-      console.error("Engine Fault Caught:", error);
+      void Bugbot.capture(toError(error), "Engine.executeScan");
       return { success: false, error: String(error) };
     } finally {
       this.isScanning = false;
@@ -47,17 +95,34 @@ const Engine = {
   },
 };
 
-// 3. API ROUTER (HONO + BUN NATIVE)
+// 4. API ROUTER (HONO + BUN NATIVE)
 const app = new Hono();
 app.use(
   "*",
   cors({ origin: "*", allowHeaders: ["X-API-Key", "Content-Type"] })
 );
 
+// Global app error boundary — instant 500 to client, Bugbot async in background
+app.onError((err, c) => {
+  void Bugbot.capture(err, `${c.req.method} ${c.req.path}`);
+
+  return c.json(
+    {
+      success: false,
+      error: "Engine Transaction Fault",
+      code: "ERR_CIRCUIT_BROKEN",
+    },
+    500
+  );
+});
+
 // Guard Layer
 app.use("/api/*", async (c, next) => {
-  // Public syndication feeds stay open for partner channels
-  if (c.req.path.startsWith("/api/feeds/")) {
+  // Public syndication feeds + fault probe stay open
+  if (
+    c.req.path.startsWith("/api/feeds/") ||
+    c.req.path === "/api/test-fault"
+  ) {
     await next();
     return;
   }
@@ -85,7 +150,8 @@ app.post("/api/tx/one-tap", async (c) => {
       })
       .returning();
     return c.json({ success: true, tx: result[0] });
-  } catch {
+  } catch (err) {
+    void Bugbot.capture(toError(err), "POST /api/tx/one-tap");
     return c.json(
       { success: false, error: "Duplicate or invalid transaction block" },
       400
@@ -135,6 +201,11 @@ app.get("/api/feeds/:channel", async (c) => {
       raw_components: compiledBundle.components,
     },
   });
+});
+
+// Force-Error Test Endpoint (verify Bugbot boundary)
+app.get("/api/test-fault", () => {
+  throw new Error("Simulated high-velocity database race condition failure.");
 });
 
 // Dynamic PSEO Endpoint serving pre-optimized edge layouts instantly
