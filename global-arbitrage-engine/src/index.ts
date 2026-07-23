@@ -12,6 +12,7 @@ import { PaymentEngine } from "./paymentEngine";
 import { CatalogGenerator } from "./pdfGenerator";
 import { MicroMarginSweeper } from "./microMarginSweeper";
 import { TokenTransactionHook } from "./tokenTransactionHook";
+import treasuryDashboard from "./treasuryDashboard";
 import { Treasury } from "./treasury";
 import type { InventoryItem } from "./types";
 
@@ -213,8 +214,13 @@ app.get("/", (c) =>
       tx: "3.333%",
       aumAnnual: "1.666%",
     },
+    links: {
+      treasuryDashboard: "/dashboard/treasury",
+    },
   })
 );
+
+app.route("/dashboard/treasury", treasuryDashboard);
 
 app.get("/api/treasury", (c) => c.json(Treasury.getTreasurySnapshot()));
 

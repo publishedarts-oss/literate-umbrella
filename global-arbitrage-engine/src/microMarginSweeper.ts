@@ -6,6 +6,8 @@ import { log } from "./lib/logger";
 
 const queryClient = new Database("arbitrage.db");
 
+export { queryClient };
+
 queryClient.run(`
   CREATE TABLE IF NOT EXISTS treasury_ledger (
     id TEXT PRIMARY KEY,
