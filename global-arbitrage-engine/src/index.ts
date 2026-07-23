@@ -5,6 +5,7 @@ import { drizzle } from "drizzle-orm/bun-sqlite";
 import { transactions } from "./db/schema";
 import { HyperBundleEngine } from "./bundleEngine";
 import { PaymentEngine } from "./paymentEngine";
+import { CatalogGenerator } from "./pdfGenerator";
 
 // 1. DATABASE
 const queryClient = new Database("arbitrage.db");
@@ -280,6 +281,87 @@ app.get("/api/feeds/:channel", async (c) => {
 
 app.get("/api/test-fault", () => {
   throw new Error("Simulated high-velocity database race condition failure.");
+});
+
+// DYNAMIC PDF BROCHURE ENDPOINT (Direct Buffer Delivery)
+app.get("/deals/:slug/brochure.pdf", async (c) => {
+  const slug = c.req.param("slug");
+
+  const activeBundle = {
+    id: crypto.randomUUID(),
+    title:
+      "The Ultimate Commercial RealEstate & Premium Perishables Combo",
+    retailValue: 4100,
+    bundlePrice: 1350,
+    tierApplied: "Pioneer Tier Active",
+    slug,
+  };
+
+  try {
+    const pdfBuffer = await CatalogGenerator.generateBrochureBuffer(activeBundle);
+
+    c.header("Content-Type", "application/pdf");
+    c.header(
+      "Content-Disposition",
+      `inline; filename="${slug}-brochure.pdf"`
+    );
+    c.header("Cache-Control", "public, max-age=300");
+    return c.body(pdfBuffer);
+  } catch (err) {
+    void Bugbot.capture(toError(err), `GET /deals/${slug}/brochure.pdf`);
+    return c.json(
+      { success: false, error: "Failed to generate brochure stream asset" },
+      500
+    );
+  }
+});
+
+// ECOSYSTEM DASHBOARD EMBEDDABLE WEB COMPONENT
+app.get("/assets/dashboard-component.js", (c) => {
+  const clientScript = `
+    class EcosystemDashboard extends HTMLElement {
+      constructor() {
+        super();
+        this.attachShadow({ mode: 'open' });
+      }
+      connectedCallback() {
+        const flip = this.getAttribute('flip') || '0';
+        const wfc = this.getAttribute('wfc') || '0';
+        const qc = this.getAttribute('qc') || '0';
+
+        this.shadowRoot.innerHTML = \`
+          <style>
+            :host { display: block; font-family: sans-serif; max-width: 400px; background: #ffffff; border: 1px solid #eeeeee; border-radius: 12px; padding: 20px; box-shadow: 0 4px 12px rgba(0,0,0,0.05); }
+            h3 { margin: 0 0 15px 0; font-size: 1.1rem; color: #111; text-transform: uppercase; letter-spacing: 0.5px; }
+            .token-row { display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px; padding-bottom: 8px; border-bottom: 1px dashed #f0f0f0; }
+            .token-info { display: flex; flex-direction: column; }
+            .token-name { font-weight: bold; color: #333; font-size: 0.95rem; }
+            .token-net { font-size: 0.75rem; color: #888; }
+            .token-val { font-family: monospace; font-size: 1.1rem; font-weight: bold; color: #111; }
+          </style>
+          <h3>Ecosystem Token Standings</h3>
+          <div class="token-row">
+            <div class="token-info"><span class="token-name">Flipcoin</span><span class="token-net">Solana Network</span></div>
+            <div class="token-val">\${parseFloat(flip).toLocaleString()}</div>
+          </div>
+          <div class="token-row">
+            <div class="token-info"><span class="token-name">WorldFortecoin</span><span class="token-net">Arweave Network</span></div>
+            <div class="token-val">\${parseFloat(wfc).toLocaleString()}</div>
+          </div>
+          <div class="token-row" style="border:none; margin:0; padding:0;">
+            <div class="token-info"><span class="token-name">Quancoin</span><span class="token-net">Solana Network</span></div>
+            <div class="token-val">\${parseFloat(qc).toLocaleString()}</div>
+          </div>
+        \`;
+      }
+    }
+    customElements.define('ecosystem-dashboard', EcosystemDashboard);
+  `;
+
+  return c.body(clientScript, 200, {
+    "Content-Type": "application/javascript; charset=utf-8",
+    "Cache-Control": "public, max-age=3600",
+  });
 });
 
 app.get("/deals/:slug", async (c) => {

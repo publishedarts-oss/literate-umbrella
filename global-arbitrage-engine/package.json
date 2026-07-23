@@ -13,9 +13,11 @@
     "@solana/web3.js": "^1.98.4",
     "drizzle-orm": "^0.33.0",
     "hono": "^4.6.0",
+    "pdfkit": "^0.19.1",
     "tweetnacl": "^1.0.3"
   },
   "devDependencies": {
+    "@types/pdfkit": "^0.17.6",
     "bun-types": "latest",
     "typescript": "^5.5.0"
   }
