@@ -219,7 +219,13 @@ dashboard.get("/data", async (c) => {
 
   const ledger = queryClient
     .prepare(
-      "SELECT * FROM treasury_ledger ORDER BY timestamp DESC LIMIT 5"
+      "SELECT * FROM treasury_ledger ORDER BY timestamp DESC LIMIT 6"
+    )
+    .all() as any[];
+
+  const securityLogs = queryClient
+    .prepare(
+      "SELECT * FROM risk_quarantine_logs ORDER BY timestamp DESC LIMIT 3"
     )
     .all() as any[];
 
@@ -234,15 +240,34 @@ dashboard.get("/data", async (c) => {
     0
   );
   const rows = ledger
-    .map(
-      (r) =>
-        `<tr><td>${new Date(r.timestamp).toLocaleTimeString()}</td><td style="color:#2f6f4e;">+$${Number(r.fees_collected).toFixed(4)}</td><td>${r.asset_type}</td></tr>`
-    )
+    .map((r) => {
+      const isSecurity = String(r.asset_type || "").includes("SECURITY");
+      const color = isSecurity ? "#b42318" : "#2f6f4e";
+      return `<tr><td>${new Date(r.timestamp).toLocaleTimeString()}</td><td style="color:${color}">+$${Number(r.fees_collected).toFixed(4)}</td><td>${r.asset_type}</td></tr>`;
+    })
     .join("");
+
+  const threatRows =
+    securityLogs
+      .map(
+        (s) => `
+    <div style="font-size:0.75rem; color:#b42318; padding:6px 0; border-bottom:1px dashed #e8dcc8; font-family:ui-monospace,monospace;">
+      ⚠️ ATTEMPT REJECTED: [${s.violation_type}] Target: ${String(s.flagged_target || "").slice(0, 10)}… Severity: ${(Number(s.severity) * 100).toFixed(0)}%
+    </div>`
+      )
+      .join("") ||
+    `<div style="color:#6b5a3e; font-size:0.75rem; text-align:center; padding:5px;">Zero security incidents detected.</div>`;
 
   return c.html(`
     <div style="font-size:0.9rem; font-weight:bold; margin-bottom:10px; color:#2f6f4e;">$${total.toFixed(2)} Platform Capture</div>
     <table><thead><tr><th>Time</th><th>Yield</th><th>Asset</th></tr></thead><tbody>${rows}</tbody></table>
+
+    <div style="font-size: 0.78rem; font-weight: 700; color: #b42318; text-transform: uppercase; margin-top: 15px; margin-bottom: 5px; letter-spacing: 0.05em;">
+      Casino Anti-Exploit Firewalls
+    </div>
+    <div style="background:#fff6f4; border: 1px solid #f0d0c8; border-radius: 8px; padding: 8px;">
+      ${threatRows}
+    </div>
   `);
 });
 

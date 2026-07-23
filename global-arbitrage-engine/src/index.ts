@@ -21,6 +21,7 @@ import {
   type PredictionMarket,
 } from "./gaming-prediction-agent";
 import { TreasuryInvestmentAgent } from "./treasury-investment-agent";
+import { CasinoSecurityAgent } from "./casino-security-agent";
 import { Treasury } from "./treasury";
 import type { InventoryItem } from "./types";
 
@@ -319,12 +320,42 @@ const activeSystemReserves = {
 app.post("/api/vegas/wager", async (c) => {
   try {
     const body = await c.req.json();
+    const requestAmount = parseFloat(String(body.betAmount ?? "10"));
+
+    const safetyCheck = CasinoSecurityAgent.evaluateTransactionRisk(
+      {
+        walletAddress: String(body.wallet || "unknown_anon_wallet"),
+        ipAddress: c.req.header("CF-Connecting-IP") || "127.0.0.1",
+        userAgent: c.req.header("User-Agent") || "",
+        transactionAmountBasis: requestAmount,
+      },
+      "bet"
+    );
+
+    if (!safetyCheck.allowed) {
+      return c.json(
+        {
+          success: false,
+          securityStatus: "BLOCKED",
+          errorCode: safetyCheck.reason,
+          incidentThreatScore: safetyCheck.threatScore,
+          action: "Quarantine applied. Wallet token locked for admin review.",
+        },
+        403
+      );
+    }
+
     const report = GamingPredictionAgent.placeWager(
       activePredictionMarket,
-      parseFloat(String(body.betAmount ?? "10")),
+      requestAmount,
       body.prediction === "NO" ? "NO" : "YES"
     );
-    return c.json({ success: true, wagerStatus: report });
+    return c.json({
+      success: true,
+      wagerStatus: report,
+      securityCheck: "PASSED",
+      threatScore: safetyCheck.threatScore,
+    });
   } catch (err) {
     return c.json({ success: false, error: String(err) }, 400);
   }
@@ -865,6 +896,9 @@ setInterval(async () => {
     4.01,
     1.02
   );
+
+  // Flush casino exposure window every 60s
+  CasinoSecurityAgent.resetExposureWindow();
 }, 60_000);
 
 void HyperBundleEngine.purgeExpiredPerishables();
