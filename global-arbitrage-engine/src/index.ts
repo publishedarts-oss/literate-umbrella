@@ -15,6 +15,7 @@ import { TokenTransactionHook } from "./tokenTransactionHook";
 import dashboard from "./dashboard";
 import { AgenticRnDLab } from "./rnd-lab-agent";
 import { licensingSystem } from "./licensing-module";
+import { FXArbitrageAgent } from "./fx-arbitrage-agent";
 import { Treasury } from "./treasury";
 import type { InventoryItem } from "./types";
 
@@ -280,6 +281,17 @@ app.post("/api/admin/rnd/trigger", async (c) => {
     action: "On-demand trend matrix evaluation finalized",
     payload: discoveredSectors,
   });
+});
+
+app.post("/api/admin/arbitrage/poll", async (c) => {
+  const body = await c.req.json().catch(() => ({}));
+  const summary = FXArbitrageAgent.checkTriangularSpread(
+    parseFloat(String(body.amountBasis ?? "100")),
+    parseFloat(String(body.flipRate ?? "0.25")),
+    parseFloat(String(body.qcRate ?? "4.0")),
+    parseFloat(String(body.usdcRate ?? "1.0"))
+  );
+  return c.json({ status: "evaluated", executionMatrix: summary });
 });
 
 app.post("/api/licenses", async (c) => {
@@ -768,7 +780,7 @@ app.post("/deals/:slug/share", async (c) => {
   return c.json(HyperBundleEngine.shareBundle(bundle, sessionId));
 });
 
-// Continuous automation — purge, multi-source feeds, and agentic R&D discovery
+// Continuous automation — purge, feeds, R&D discovery, FX triangular polls
 const PORT = 3000;
 setInterval(async () => {
   const { purgedCount } = await HyperBundleEngine.purgeExpiredPerishables();
@@ -779,6 +791,15 @@ setInterval(async () => {
   }
   await HyperBundleEngine.ingestAllSources();
   await AgenticRnDLab.runDiscoveryCycle();
+
+  // Simulate live multi-token market fluctuation for triangular arb
+  const simulatedMarketFluctuation = 0.25 + (Math.random() * 0.02 - 0.01);
+  FXArbitrageAgent.checkTriangularSpread(
+    500,
+    simulatedMarketFluctuation,
+    4.01,
+    1.02
+  );
 }, 60_000);
 
 void HyperBundleEngine.purgeExpiredPerishables();
