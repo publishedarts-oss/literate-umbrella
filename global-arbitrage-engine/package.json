@@ -7,7 +7,8 @@
     "build": "bun build ./src/index.ts --outdir ./dist --target bun",
     "start": "bun src/index.ts",
     "deploy:tokens": "bun src/deployTokens.ts",
-    "test": "bun test"
+    "test": "bun test",
+    "sweep:stress": "bun src/microMarginSweeper.ts"
   },
   "dependencies": {
     "@solana/spl-token": "^0.4.15",
@@ -15,7 +16,8 @@
     "drizzle-orm": "^0.33.0",
     "hono": "^4.6.0",
     "pdfkit": "^0.19.1",
-    "tweetnacl": "^1.0.3"
+    "tweetnacl": "^1.0.3",
+    "zod": "^4.4.3"
   },
   "devDependencies": {
     "@types/pdfkit": "^0.17.6",

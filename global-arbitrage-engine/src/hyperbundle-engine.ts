@@ -484,6 +484,10 @@ export const HyperBundleEngine = {
 
   loyalty: Loyalty,
   treasury: Treasury,
+  updateTreasury: Treasury.updateTreasury,
 };
+
+/** Convenience alias for micro-sweepers and external adapters */
+export const engine = HyperBundleEngine;
 
 export type { AbGroup, Bundle, HoldBalances, InventoryItem };

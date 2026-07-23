@@ -10,6 +10,7 @@ import { applySecurityHeaders } from "./lib/securityHeaders";
 import { sanitizeText } from "./lib/sanitize";
 import { PaymentEngine } from "./paymentEngine";
 import { CatalogGenerator } from "./pdfGenerator";
+import { MicroMarginSweeper } from "./microMarginSweeper";
 import { Treasury } from "./treasury";
 import type { InventoryItem } from "./types";
 
@@ -260,6 +261,26 @@ app.post("/api/pipeline/ingest-all", async (c) => {
   const results = await HyperBundleEngine.ingestAllSources();
   return c.json({ success: true, results });
 });
+
+app.post("/api/treasury/micro-sweep", async (c) => {
+  const body = await c.req.json();
+  const transactions = body.transactions as Array<{ amount: number }>;
+  const assetType = (body.assetType as "usdc" | "btc" | "points") || "usdc";
+  const totalToTreasury = await MicroMarginSweeper.sweepGlobalVolume(
+    transactions,
+    assetType
+  );
+  return c.json({
+    success: true,
+    totalToTreasury,
+    treasury: Treasury.getTreasurySnapshot(),
+    recent: MicroMarginSweeper.recentSweeps(5),
+  });
+});
+
+app.get("/api/treasury/micro-sweep/recent", (c) =>
+  c.json({ sweeps: MicroMarginSweeper.recentSweeps(20) })
+);
 
 // DYNAMIC PSEO XML SITEMAP PATH
 app.get("/sitemap.xml", (c) => {

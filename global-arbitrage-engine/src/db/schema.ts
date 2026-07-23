@@ -60,6 +60,15 @@ export const treasuryBalances = sqliteTable("treasury_balances", {
   amountUsd: real("amount_usd").notNull(),
 });
 
+export const treasuryLedger = sqliteTable("treasury_ledger", {
+  id: text("id").primaryKey(),
+  feesCollected: real("fees_collected").default(0),
+  dailySlice: real("daily_slice").default(0),
+  assetType: text("asset_type").default("usdc"),
+  transactionCount: integer("transaction_count").default(0),
+  timestamp: text("timestamp").notNull(),
+});
+
 export const loyaltySessions = sqliteTable("loyalty_sessions", {
   sessionId: text("session_id").primaryKey(),
   userId: text("user_id"),
