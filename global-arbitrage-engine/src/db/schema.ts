@@ -27,11 +27,21 @@ export const tokenBalances = sqliteTable("token_balances", {
 
 export const inventory = sqliteTable("inventory", {
   id: text("id").primaryKey(),
-  sector: text("sector").notNull(),
+  sector: text("sector").notNull(), // 'RealEstate' | 'Airlines' | 'Perishables'
   title: text("title").notNull(),
   wholesalePrice: real("wholesale_price").notNull(),
   meta: text("meta", { mode: "json" }).notNull(),
   expiresAt: text("expires_at"),
+});
+
+export const analyticsEvents = sqliteTable("analytics_events", {
+  id: text("id").primaryKey(),
+  bundleId: text("bundle_id").notNull(),
+  eventType: text("event_type").notNull(), // 'impression' | 'pdf_download' | 'conversion'
+  walletConnected: integer("wallet_connected", { mode: "boolean" }).default(
+    false
+  ),
+  timestamp: text("timestamp").notNull(),
 });
 
 export const bundles = sqliteTable("bundles", {

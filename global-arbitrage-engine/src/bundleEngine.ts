@@ -1,8 +1,8 @@
 import { Database } from "bun:sqlite";
 
-// Shared inventory connection for the cron janitor (same file as API bootstrap)
-const inventoryClient = new Database("arbitrage.db");
-inventoryClient.run(`
+// Shared engine DB connection (same file as API bootstrap)
+const queryClient = new Database("arbitrage.db");
+queryClient.run(`
   CREATE TABLE IF NOT EXISTS inventory (
     id TEXT PRIMARY KEY,
     sector TEXT NOT NULL,
@@ -10,6 +10,13 @@ inventoryClient.run(`
     wholesale_price REAL NOT NULL,
     meta TEXT NOT NULL,
     expires_at TEXT
+  );
+  CREATE TABLE IF NOT EXISTS analytics_events (
+    id TEXT PRIMARY KEY,
+    bundle_id TEXT NOT NULL,
+    event_type TEXT NOT NULL,
+    wallet_connected INTEGER DEFAULT 0,
+    timestamp TEXT NOT NULL
   );
 `);
 
@@ -26,18 +33,14 @@ export const HyperBundleEngine = {
       (itemA.meta.retailEstimate || itemA.wholesalePrice * 1.5) +
       (itemB.meta.retailEstimate || itemB.wholesalePrice * 1.5);
 
-    // Calculate loyalty discounts based on coin holding metrics
     let holdingDiscountMultiplier = 1.0;
     if (holdBalances) {
       const combinedHoldScore =
         holdBalances.FLIP + holdBalances.WFC * 1.5 + holdBalances.QC * 1.2;
-      if (combinedHoldScore >= 5000)
-        holdingDiscountMultiplier = 0.8; // 20% discount for Whale Tier
-      else if (combinedHoldScore >= 1000)
-        holdingDiscountMultiplier = 0.9; // 10% discount for Pioneer Tier
+      if (combinedHoldScore >= 5000) holdingDiscountMultiplier = 0.8;
+      else if (combinedHoldScore >= 1000) holdingDiscountMultiplier = 0.9;
     }
 
-    // Baseline 40% consumer discount modified by holding tier rewards
     const targetedBaseDiscount = 0.4 * (2.0 - holdingDiscountMultiplier);
     const optimizedPrice = Math.max(
       combinedWholesale * 1.1,
@@ -49,7 +52,7 @@ export const HyperBundleEngine = {
       .replace(/(^-|-$)+/g, "");
 
     return {
-      id: crypto.randomUUID(),
+      id: `${itemA.id}_${itemB.id}`,
       slug,
       title: `The Ultimate ${itemA.sector} & ${itemB.sector} Premium Combo`,
       retailValue: Math.round(combinedRetail),
@@ -73,7 +76,6 @@ export const HyperBundleEngine = {
     };
   },
 
-  // HIGH-SPEED XML SITEMAP ENGINE
   generateSitemapXML(
     slugs: string[],
     domain: string = "https://yourmarketplace.com"
@@ -100,7 +102,6 @@ export const HyperBundleEngine = {
 </urlset>`.trim();
   },
 
-  // CRON-JOB JANITOR ENGINE
   async purgeExpiredPerishables(): Promise<{ purgedCount: number }> {
     const now = new Date().toISOString();
     console.log(
@@ -108,7 +109,7 @@ export const HyperBundleEngine = {
     );
 
     try {
-      const query = inventoryClient.prepare(
+      const query = queryClient.prepare(
         "DELETE FROM inventory WHERE expires_at IS NOT NULL AND expires_at < $now"
       );
       const result = query.run({ $now: now });
@@ -123,5 +124,87 @@ export const HyperBundleEngine = {
       console.error("❌ [CRON JANITOR] Clean sweep macro failed:", err);
       return { purgedCount: 0 };
     }
+  },
+
+  // DYNAMIC INGESTION PIPELINE CONTROLLER
+  async ingestExternalFeed(sector: string, externalItems: any[]) {
+    console.log(
+      `📥 [PIPELINE] Ingesting ${externalItems.length} streams for sector: ${sector}`
+    );
+    const insertStmt = queryClient.prepare(`
+      INSERT OR REPLACE INTO inventory (id, sector, title, wholesale_price, meta, expires_at)
+      VALUES ($id, $sector, $title, $wholesalePrice, $meta, $expiresAt)
+    `);
+
+    let ingestedCount = 0;
+    for (const item of externalItems) {
+      insertStmt.run({
+        $id: item.uuid || crypto.randomUUID(),
+        $sector: sector,
+        $title: item.displayTitle,
+        $wholesalePrice: item.costBasis,
+        $meta: JSON.stringify(item.attributes || {}),
+        $expiresAt: item.deadline || null,
+      });
+      ingestedCount++;
+    }
+    return { success: true, count: ingestedCount };
+  },
+
+  // ZERO-LATENCY ANALYTICS WRITER
+  trackMetrics(
+    bundleId: string,
+    eventType: string,
+    walletConnected: boolean = false
+  ) {
+    try {
+      const query = queryClient.prepare(`
+        INSERT INTO analytics_events (id, bundle_id, event_type, wallet_connected, timestamp)
+        VALUES ($id, $bundleId, $eventType, $walletConnected, $timestamp)
+      `);
+      query.run({
+        $id: crypto.randomUUID(),
+        $bundleId: bundleId,
+        $eventType: eventType,
+        $walletConnected: walletConnected ? 1 : 0,
+        $timestamp: new Date().toISOString(),
+      });
+    } catch (err) {
+      console.error("Analytics failure ignored:", err);
+    }
+  },
+
+  // HIGH-VELOCITY ANALYTICS RATIO AGGREGATOR
+  getConversionPerformanceMetrics() {
+    const totalImpressions = queryClient
+      .prepare(
+        "SELECT COUNT(*) as count FROM analytics_events WHERE event_type = 'impression'"
+      )
+      .get() as { count: number };
+    const totalConversions = queryClient
+      .prepare(
+        "SELECT COUNT(*) as count FROM analytics_events WHERE event_type = 'conversion'"
+      )
+      .get() as { count: number };
+    const walletCheck = queryClient
+      .prepare(
+        "SELECT COUNT(*) as count FROM analytics_events WHERE wallet_connected = 1"
+      )
+      .get() as { count: number };
+
+    const rate =
+      totalImpressions.count > 0
+        ? (totalConversions.count / totalImpressions.count) * 100
+        : 0;
+
+    return {
+      metricsEngine: "AM-v1",
+      aggregateData: {
+        rawImpressions: totalImpressions.count,
+        rawConversions: totalConversions.count,
+        walletEngagedUsers: walletCheck.count,
+        blendedConversionRate: `${rate.toFixed(2)}%`,
+      },
+    };
   },
 };

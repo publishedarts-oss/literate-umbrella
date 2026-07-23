@@ -40,6 +40,13 @@ queryClient.run(`
     meta TEXT NOT NULL,
     expires_at TEXT
   );
+  CREATE TABLE IF NOT EXISTS analytics_events (
+    id TEXT PRIMARY KEY,
+    bundle_id TEXT NOT NULL,
+    event_type TEXT NOT NULL,
+    wallet_connected INTEGER DEFAULT 0,
+    timestamp TEXT NOT NULL
+  );
 `);
 const db = drizzle(queryClient);
 
@@ -134,6 +141,7 @@ app.use(
       "X-User-FLIP",
       "X-User-WFC",
       "X-User-QC",
+      "X-Wallet-Active",
     ],
   })
 );
@@ -175,7 +183,8 @@ app.get("/sitemap.xml", (c) => {
 app.use("/api/*", async (c, next) => {
   if (
     c.req.path.startsWith("/api/feeds/") ||
-    c.req.path === "/api/test-fault"
+    c.req.path === "/api/test-fault" ||
+    c.req.path === "/api/analytics/dashboard"
   ) {
     await next();
     return;
@@ -187,6 +196,25 @@ app.use("/api/*", async (c, next) => {
 });
 
 app.post("/api/scan", async (c) => c.json(await Engine.executeScan()));
+
+// INGESTION ENDPOINT: Push multi-sector pipeline items into the system
+app.post("/api/pipeline/ingest", async (c) => {
+  const body = await c.req.json();
+  const { sector, items } = body;
+
+  if (!sector || !Array.isArray(items)) {
+    return c.json({ error: "Invalid layout request matrix structure" }, 400);
+  }
+
+  const status = await HyperBundleEngine.ingestExternalFeed(sector, items);
+  return c.json({ success: true, tracking: status });
+});
+
+// ANALYTICS MONITORING BOARD
+app.get("/api/analytics/dashboard", (c) => {
+  const metrics = HyperBundleEngine.getConversionPerformanceMetrics();
+  return c.json(metrics);
+});
 
 // ONE-TAP FIAT PAYMENTS (Stripe / PayPal Handler)
 app.post("/api/tx/one-tap", async (c) => {
@@ -341,6 +369,11 @@ app.get("/deals/:slug/brochure.pdf", async (c) => {
 
   try {
     const pdfBuffer = await CatalogGenerator.generateBrochureBuffer(activeBundle);
+    HyperBundleEngine.trackMetrics(
+      activeBundle.id,
+      "pdf_download",
+      c.req.header("X-Wallet-Active") === "true"
+    );
 
     c.header("Content-Type", "application/pdf");
     c.header(
@@ -408,9 +441,17 @@ app.get("/assets/dashboard-component.js", (c) => {
 
 app.get("/deals/:slug", async (c) => {
   const slug = c.req.param("slug");
+  const bundleIdMock = "bundle_realestate_perishables_01";
+
+  // Fire-and-forget impression tracking
+  HyperBundleEngine.trackMetrics(
+    bundleIdMock,
+    "impression",
+    c.req.header("X-Wallet-Active") === "true"
+  );
 
   const mockBundle = {
-    title: "Premium Tiny-Home Plot & Off-Grid Energy Package",
+    title: `High Velocity Combo Pack [${slug}]`,
     retailValue: 8500,
     bundlePrice: 2900,
     slug,
@@ -423,10 +464,31 @@ app.get("/deals/:slug", async (c) => {
   return c.html(seoPage.html);
 });
 
-// Native lightweight background janitor — purge expired perishables every 60s
+app.post("/deals/:slug/buy", async (c) => {
+  const bundleIdMock = "bundle_realestate_perishables_01";
+  HyperBundleEngine.trackMetrics(
+    bundleIdMock,
+    "conversion",
+    c.req.header("X-Wallet-Active") === "true"
+  );
+  return c.json({ status: "processed", tracked: true });
+});
+
+// Native lightweight background worker — purge + simulated airline feed every 60s
 const PORT = 3000;
 setInterval(async () => {
   await HyperBundleEngine.purgeExpiredPerishables();
+
+  const mockAirlinesFeed = [
+    {
+      uuid: "flight_902",
+      displayTitle: "Empty Leg: Miami to NYC Private Jet",
+      costBasis: 950,
+      attributes: { retailEstimate: 4500 },
+      deadline: new Date(Date.now() + 86_400_000).toISOString(),
+    },
+  ];
+  await HyperBundleEngine.ingestExternalFeed("Airlines", mockAirlinesFeed);
 }, 60_000);
 
 // Kick an immediate sweep on boot so expired demo inventory clears promptly
