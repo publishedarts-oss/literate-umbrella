@@ -32,8 +32,30 @@ queryClient.run(`
     duration_ms INTEGER NOT NULL,
     opportunities_found INTEGER NOT NULL
   );
+  CREATE TABLE IF NOT EXISTS inventory (
+    id TEXT PRIMARY KEY,
+    sector TEXT NOT NULL,
+    title TEXT NOT NULL,
+    wholesale_price REAL NOT NULL,
+    meta TEXT NOT NULL,
+    expires_at TEXT
+  );
 `);
 const db = drizzle(queryClient);
+
+// Seed one expired perishable so the janitor has work on first sweep
+queryClient.run(`
+  INSERT OR IGNORE INTO inventory (id, sector, title, wholesale_price, meta, expires_at)
+  VALUES (
+    'inv_expired_demo',
+    'Perishables',
+    'Expired Demo Overstock Crate',
+    50,
+    '{"retailEstimate":120}',
+    '2020-01-01T00:00:00.000Z'
+  );
+`);
+
 
 // 2. NATIVE BUGBOT ENGINE (zero-overhead, fire-and-forget)
 const Bugbot = {
@@ -127,6 +149,26 @@ app.onError((err, c) => {
     },
     500
   );
+});
+
+// DYNAMIC PSEO XML SITEMAP PATH
+app.get("/sitemap.xml", (c) => {
+  const activeSlugs = [
+    "montana-mountain-view-lot-wagyu-a5-grilling-overstock-crate",
+    "premium-tiny-home-plot-off-grid-energy-package",
+    "empty-leg-flight-charter-luxury-villa-gap-night",
+  ];
+
+  const sitemapPayload = HyperBundleEngine.generateSitemapXML(
+    activeSlugs,
+    "http://localhost:3000"
+  );
+
+  return c.body(sitemapPayload, 200, {
+    "Content-Type": "application/xml; charset=utf-8",
+    "Cache-Control":
+      "public, max-age=3600, s-maxage=14400, stale-while-revalidate=600",
+  });
 });
 
 // Guard Layer
@@ -381,8 +423,17 @@ app.get("/deals/:slug", async (c) => {
   return c.html(seoPage.html);
 });
 
+// Native lightweight background janitor — purge expired perishables every 60s
+const PORT = 3000;
+setInterval(async () => {
+  await HyperBundleEngine.purgeExpiredPerishables();
+}, 60_000);
+
+// Kick an immediate sweep on boot so expired demo inventory clears promptly
+void HyperBundleEngine.purgeExpiredPerishables();
+
 export default {
-  port: 3000,
+  port: PORT,
   hostname: "0.0.0.0", // Forces accessibility across your entire machine
   fetch: app.fetch,
 };

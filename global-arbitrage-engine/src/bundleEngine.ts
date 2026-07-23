@@ -1,3 +1,18 @@
+import { Database } from "bun:sqlite";
+
+// Shared inventory connection for the cron janitor (same file as API bootstrap)
+const inventoryClient = new Database("arbitrage.db");
+inventoryClient.run(`
+  CREATE TABLE IF NOT EXISTS inventory (
+    id TEXT PRIMARY KEY,
+    sector TEXT NOT NULL,
+    title TEXT NOT NULL,
+    wholesale_price REAL NOT NULL,
+    meta TEXT NOT NULL,
+    expires_at TEXT
+  );
+`);
+
 // Pure functional optimization logic to build high-margin bundles
 export const HyperBundleEngine = {
   // Calculates price based on holding vectors of FLIP, WFC, and QC
@@ -56,5 +71,57 @@ export const HyperBundleEngine = {
         "Cache-Control": "public, max-age=60",
       },
     };
+  },
+
+  // HIGH-SPEED XML SITEMAP ENGINE
+  generateSitemapXML(
+    slugs: string[],
+    domain: string = "https://yourmarketplace.com"
+  ): string {
+    const entries = slugs
+      .map(
+        (slug) => `
+  <url>
+    <loc>${domain}/deals/${slug}</loc>
+    <lastmod>${new Date().toISOString().split("T")[0]}</lastmod>
+    <changefreq>hourly</changefreq>
+    <priority>0.9</priority>
+  </url>`
+      )
+      .join("");
+
+    return `<?xml version="1.0" encoding="UTF-8"?>
+<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
+  <url>
+    <loc>${domain}</loc>
+    <changefreq>daily</changefreq>
+    <priority>1.0</priority>
+  </url>${entries}
+</urlset>`.trim();
+  },
+
+  // CRON-JOB JANITOR ENGINE
+  async purgeExpiredPerishables(): Promise<{ purgedCount: number }> {
+    const now = new Date().toISOString();
+    console.log(
+      `🧹 [CRON JANITOR] Scanning for inventory components expired before ${now}...`
+    );
+
+    try {
+      const query = inventoryClient.prepare(
+        "DELETE FROM inventory WHERE expires_at IS NOT NULL AND expires_at < $now"
+      );
+      const result = query.run({ $now: now });
+
+      if (result.changes > 0) {
+        console.log(
+          `✨ [CRON JANITOR] Successfully purged ${result.changes} expired perishable records.`
+        );
+      }
+      return { purgedCount: result.changes };
+    } catch (err) {
+      console.error("❌ [CRON JANITOR] Clean sweep macro failed:", err);
+      return { purgedCount: 0 };
+    }
   },
 };
