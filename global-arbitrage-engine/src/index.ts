@@ -877,7 +877,7 @@ app.post("/deals/:slug/share", async (c) => {
 });
 
 // Continuous automation — purge, feeds, R&D discovery, FX triangular polls
-const PORT = 3000;
+const PORT = Number(process.env.PORT) || 3000;
 setInterval(async () => {
   const { purgedCount } = await HyperBundleEngine.purgeExpiredPerishables();
   if (purgedCount > 0) {
